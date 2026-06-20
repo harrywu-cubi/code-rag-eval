@@ -54,6 +54,12 @@ class ChromaStore:
             metadatas=[chunk_to_metadata(c) for c in chunks],
         )
 
+    def all_chunks(self) -> list[Chunk]:
+        res = self._col.get(include=["documents", "metadatas"])
+        docs = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        return [metadata_to_chunk(doc, meta) for doc, meta in zip(docs, metas)]
+
     def query(self, vector: list[float], n: int) -> list[tuple[Chunk, float]]:
         res = self._col.query(query_embeddings=[vector], n_results=n)
         docs = res["documents"][0]
