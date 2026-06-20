@@ -8,7 +8,7 @@ from code_rag_eval.factories import make_embedding_client, make_llm_client
 from code_rag_eval.ingest.store import ChromaStore
 from code_rag_eval.ingest.cache import EmbeddingCache, CachedEmbeddingClient
 from code_rag_eval.ingest.pipeline import ingest as run_ingest
-from code_rag_eval.retrieve.vector import VectorRetriever
+from code_rag_eval.retrieve.factory import make_retriever
 from code_rag_eval.generate.answer import generate_answer
 from code_rag_eval.eval.generate_questions import collect_symbols, draft_candidates
 from code_rag_eval.eval.dataset import load_eval_set
@@ -41,7 +41,7 @@ def ask(question: str, config: str = "configs/baseline.yaml") -> None:
     embed = make_embedding_client(cfg.embedding)
     llm = make_llm_client(cfg.generation)
     store = ChromaStore(collection_name=cfg.name, persist_dir=CHROMA_DIR)
-    retriever = VectorRetriever(store, embed)
+    retriever = make_retriever(cfg, store, embed)
     retrieved = retriever.retrieve(question, cfg.retrieval.top_k)
     answer = generate_answer(question, retrieved, llm)
     typer.echo(answer.text)
@@ -90,7 +90,7 @@ def eval(config: str = "configs/baseline.yaml",
                                   EmbeddingCache(".emb_cache.sqlite"))
     llm = make_llm_client(cfg.generation)
     store = ChromaStore(collection_name=cfg.name, persist_dir=CHROMA_DIR)
-    retriever = VectorRetriever(store, embed)
+    retriever = make_retriever(cfg, store, embed)
     judge = AnthropicJudge(model=cfg.generation.model)
     answer_fn = partial(generate_answer, llm=llm)
 
