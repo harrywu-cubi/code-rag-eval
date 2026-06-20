@@ -3,7 +3,7 @@ from pathlib import Path
 from code_rag_eval.types import Chunk
 from code_rag_eval.config import ChunkingConfig
 from code_rag_eval.ingest.walk import iter_python_files
-from code_rag_eval.ingest.chunkers import chunk_fixed
+from code_rag_eval.ingest.chunkers import chunk_fixed, chunk_ast
 from code_rag_eval.paths import relpath
 
 
@@ -14,8 +14,10 @@ def build_chunks(source_dir: Path, corpus_root: Path, chunking: ChunkingConfig) 
         rel = relpath(path, corpus_root)
         if chunking.strategy == "fixed":
             chunks.extend(chunk_fixed(text, rel, chunking.window_lines, chunking.overlap_lines))
+        elif chunking.strategy == "ast":
+            chunks.extend(chunk_ast(text, rel))
         else:
-            raise ValueError(f"unknown chunking strategy: {chunking.strategy} (ast lands in Phase 4)")
+            raise ValueError(f"unknown chunking strategy: {chunking.strategy}")
     return chunks
 
 

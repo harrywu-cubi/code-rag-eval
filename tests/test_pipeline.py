@@ -28,3 +28,16 @@ def test_ingest_embeds_and_stores(tmp_path: Path):
     assert n >= 1
     hits = store.query(FakeEmbeddingClient().embed(["line1"])[0], n=1)
     assert hits and hits[0][0].file == "fastapi/routing.py"
+
+
+def test_build_chunks_ast_strategy(tmp_path):
+    from code_rag_eval.config import ChunkingConfig
+    from code_rag_eval.ingest.pipeline import build_chunks
+    root = tmp_path / "fastapi"
+    src = root / "fastapi"
+    src.mkdir(parents=True)
+    (src / "m.py").write_text("def alpha():\n    return 1\n\n\nclass C:\n    def beta(self):\n        return 2\n", encoding="utf-8")
+    chunks = build_chunks(src, root, ChunkingConfig(strategy="ast"))
+    syms = {c.symbol for c in chunks}
+    assert "alpha" in syms and "C.beta" in syms
+    assert all(c.file == "fastapi/m.py" for c in chunks)
