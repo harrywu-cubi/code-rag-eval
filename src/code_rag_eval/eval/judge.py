@@ -19,15 +19,17 @@ def _first_float(text: str, default: float = 0.0) -> float:
 class AnthropicJudge:
     """LLM-as-judge backed by Anthropic. Used for real eval runs (needs API key)."""
 
-    def __init__(self, model: str = "claude-sonnet-4-6"):
-        from anthropic import Anthropic
-        self._client = Anthropic()
+    def __init__(self, model: str = "claude-sonnet-4-6", base_url: str | None = None):
+        from code_rag_eval.anthropic_backend import build_anthropic
+        self._client = build_anthropic(base_url)
         self.model = model
 
     def _ask(self, prompt: str) -> str:
+        from code_rag_eval.anthropic_backend import THINKING_DISABLED
         msg = self._client.messages.create(
             model=self.model, max_tokens=16,
             messages=[{"role": "user", "content": prompt}],
+            thinking=THINKING_DISABLED,
         )
         return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
 

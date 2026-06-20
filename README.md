@@ -1,38 +1,17 @@
 # code-rag-eval
 
-**A code Q&A RAG system over the FastAPI codebase whose real deliverable is a rigorous, objective evaluation harness.**
+A code Q&A RAG system over the FastAPI codebase, built to measure — objectively — whether retrieval finds the right code and whether the answer is grounded in it.
 
-Anyone can wire up retrieval-augmented generation. The value here is *proving whether retrieval finds the right code* with objective metrics, and *defending design choices with data*. In the code domain "the right code" is an objective fact — a specific function at a known location — which makes the retrieval metrics unusually trustworthy.
+The interesting problem here is evaluation. In the code domain "the right code" is an objective fact — a specific function at a known location — so retrieval quality can be measured against verifiable ground truth instead of judgment calls. This project leans on that:
 
-Ask a question like *"Where is the route handler built?"* and the system retrieves the most relevant FastAPI source chunks, answers from them, and cites `file:line`. Then an evaluation harness scores, against a hand-verified question set, whether retrieval surfaced the correct function and whether the answer is grounded in it.
+- **Objective, AST-based ground truth.** A stdlib-`ast` symbol enumerator lists every function/class/method in the corpus with its exact line range. "Did retrieval surface the right code?" reduces to a line-range overlap check, not an opinion.
+- **Retrieval and generation are measured separately.** Retrieval metrics (hit-rate@k, recall@k, MRR) and generation metrics (faithfulness, answer relevancy, context precision, citation accuracy) are computed independently, so a good answer over bad context — or vice versa — is visible rather than averaged away.
+- **A hand-written evaluation harness.** The chunker, retriever, prompt assembly, LLM judge, and the entire eval pipeline are written directly against small interfaces. The vector store (Chroma) is the only framework, and it's just glue.
+- **An 8-config experiment matrix.** chunking {fixed, AST} × embedding {OpenAI-general, Voyage-code} × retrieval {vector, hybrid} = 8 configs, plus a BM25-only reference, run through one sweep command to answer a concrete question with data: *does code-trained embedding and/or AST-aware chunking and/or lexical-hybrid retrieval find the right FastAPI function more reliably?*
 
-> This is **Project 1 of 3** in a code/developer-tools portfolio. The retriever built here is designed to be reused by a SWE-bench issue-fixing agent (Project 2) and productionized for serving (Project 3).
+Ask a question like *"Where is the route handler built?"* and the system retrieves the most relevant FastAPI source chunks, answers from them, and cites `file:line`. The harness then scores that behavior against a hand-verified question set.
 
----
-
-## Status
-
-**Phases 0–7 are code-complete**: a working baseline RAG pipeline, full evaluation harness (55 offline tests passing), AST-aware chunking, Voyage embeddings, hybrid retrieval, the experiment sweep CLI, and the Streamlit demo. The live sweep (which produces the final `DECISIONS.md` numbers) requires API keys and a verified `data/eval/questions.jsonl` — see the [Roadmap](#roadmap).
-
-| Capability | Status |
-|---|---|
-| Ingestion: walk → chunk → embed → vector store | ✅ Implemented |
-| Fixed-size (line-window) chunking | ✅ Implemented |
-| OpenAI `text-embedding-3-large` embeddings | ✅ Implemented |
-| Chroma vector store (cosine) | ✅ Implemented |
-| Vector top-k retrieval | ✅ Implemented |
-| Prompt assembly + Claude answer with `file:line` citations | ✅ Implemented |
-| Eval-set tooling (symbol enumerator, schema, draft generator) | ✅ Implemented |
-| Retrieval metrics: hit-rate@k, recall@k, MRR | ✅ Implemented |
-| Generation metrics: faithfulness, answer relevancy, context precision (LLM-judge) + citation accuracy | ✅ Implemented |
-| On-disk embedding cache | ✅ Implemented |
-| AST-aware (tree-sitter) chunking | ✅ Implemented |
-| Code-specialized `voyage-code-3` embeddings | ✅ Implemented |
-| Hybrid retrieval (BM25 + vector, RRF) | ✅ Implemented |
-| 8-config experiment sweep + `DECISIONS.md` | ✅ Tooling built (live run needs API keys) |
-| Streamlit demo UI | ✅ Implemented |
-
-Config values `ast` / `voyage` / `hybrid` are fully supported. Use them in any YAML config or pass them via the `experiment` sweep command.
+> Project 1 of 2 in a code/developer-tools portfolio. The retriever built here is designed to be reused by a SWE-bench issue-fixing agent (Project 2).
 
 ---
 
@@ -47,16 +26,14 @@ QUERY (online)
   question ─► retriever {vector | bm25 | hybrid-RRF} (embed → top-k ANN or BM25 or both)
            ─► prompt assembly (file:line headers) ─► Claude ─► answer + file:line citations
 
-EVALUATION (the deliverable)
+EVALUATION
   eval set {question, category, gold symbols/files/line-ranges, reference answer}
        ├─ RETRIEVAL: hit-rate@k, recall@k, MRR
        └─ GENERATION: faithfulness, answer relevancy, context precision (LLM-judge) + citation accuracy
               └─ run a config ─► results/<config>.json ─► DECISIONS.md (experiment sweep)
 ```
 
-The framework (Chroma) is glue. The **chunker, retriever, prompt assembly, LLM-judge, and the entire eval harness are hand-written** — this is the answer to "what did you build without the framework?"
-
-Every seam is a small interface (`EmbeddingClient`, `VectorStore`, `LLMClient`, `LLMJudge`), so tests run fully offline against fakes and new implementations slot in without touching callers.
+Every seam is a small interface (`EmbeddingClient`, `VectorStore`, `LLMClient`, `LLMJudge`), so the test suite runs fully offline against fakes and new implementations slot in without touching callers.
 
 ---
 
@@ -67,7 +44,7 @@ code-rag-eval/
 ├── app/
 │   └── streamlit_app.py          # Streamlit demo: query box → answer + shown sources
 ├── configs/
-│   └── baseline.yaml             # the experiment config (chunking × embedding × retrieval × generation)
+│   └── baseline.yaml             # an experiment config (chunking × embedding × retrieval × generation)
 ├── data/
 │   ├── corpus/                   # FastAPI source (gitignored); COMMIT.txt pins the version
 │   └── eval/questions.jsonl      # hand-verified eval set (you create this — see below)
@@ -190,11 +167,7 @@ Scores a config over the hand-verified question set and writes a JSON report to 
 ```bash
 uv run code-rag-eval eval
 # evaluated 50 questions -> results/baseline.json
-#   hit_at_1: 0.620
-#   hit_at_5: 0.840
-#   mrr: 0.710
-#   faithfulness: 0.880
-#   citation_accuracy: 0.760
+#   hit_at_1, hit_at_5, mrr, faithfulness, citation_accuracy, ...
 ```
 
 > Requires `data/eval/questions.jsonl` to exist — see [Building the eval set](#building-the-eval-set). The embedding cache (`.emb_cache.sqlite`) means re-runs only pay for new texts.
@@ -206,7 +179,7 @@ uv run code-rag-eval experiment --dry-run   # list the 8 configs (offline, no ke
 uv run code-rag-eval experiment             # full sweep: ingest+eval each config; writes results/ + DECISIONS.md
 ```
 
-The 8-config matrix is **chunking{fixed, AST} × embedding{OpenAI-general, Voyage-code} × retrieval{vector, hybrid}**. The live sweep needs API keys and a verified `data/eval/questions.jsonl`; `--dry-run` works offline.
+The 8-config matrix is **chunking {fixed, AST} × embedding {OpenAI-general, Voyage-code} × retrieval {vector, hybrid}**. The live sweep needs API keys and a verified `data/eval/questions.jsonl`; `--dry-run` works offline.
 
 ### Demo UI
 
@@ -249,13 +222,11 @@ generation:
   model: claude-sonnet-4-6
 ```
 
-The experiment matrix sweeps **chunking {fixed, AST} × embedding {OpenAI-general, Voyage-code} × retrieval {vector, hybrid}** = 8 configs, with a BM25-only reference baseline, to answer: *does a code-trained embedding and/or AST-aware chunking and/or lexical hybrid retrieval find the right FastAPI function more reliably?* Run `uv run code-rag-eval experiment` to execute the sweep; results land in `results/` and a comparison table + winning config are written to `DECISIONS.md`. (Regenerate after a live run to get real numbers.)
+Config values `ast` / `voyage` / `hybrid` are fully supported — use them in any YAML config or let the `experiment` command sweep them. The matrix sweeps **chunking {fixed, AST} × embedding {OpenAI-general, Voyage-code} × retrieval {vector, hybrid}** = 8 configs, plus a BM25-only reference baseline.
 
 ---
 
 ## Evaluation methodology
-
-The eval harness is the point of the project.
 
 ### Eval set
 
@@ -303,11 +274,11 @@ A retrieved chunk "covers" a gold symbol when it is in the same file and its lin
 | **context precision** | Fraction of retrieved chunks the judge deems relevant |
 | **citation accuracy** | Fraction of the answer's `file:line` citations that fall inside a gold range (deterministic) |
 
-> **Note on RAGAS:** the design names RAGAS for the LLM-judged metrics; they are implemented here as a self-contained `LLMJudge` (own prompts, behind a protocol) for full offline-testability and to avoid coupling to a fast-moving third-party API. Swapping in RAGAS as an industry-standard cross-check is a planned follow-up. Methodology is framed against **COIR (Code Information Retrieval)**, the recognized code-retrieval benchmark.
+The LLM-judged metrics are implemented as a self-contained `LLMJudge` (own prompts, behind a protocol) for full offline-testability and to avoid coupling to a fast-moving third-party API. Swapping in RAGAS as an industry-standard cross-check is a planned follow-up. Methodology is framed against **COIR (Code Information Retrieval)**, the recognized code-retrieval benchmark.
 
 ### Building the eval set
 
-The verified question set is the one deliberately manual deliverable (its honesty is the whole point):
+The verified question set is the one deliberately manual deliverable — its correctness is what makes the metrics trustworthy:
 
 ```bash
 # 1. Draft candidates with an LLM from real corpus symbols:
@@ -321,6 +292,18 @@ uv run code-rag-eval draft-questions --per-category 15
 ```
 
 `candidates.jsonl` stays gitignored; the verified `questions.jsonl` is committed as a project artifact.
+
+---
+
+## Results
+
+The harness, metrics, and the 8-config matrix are implemented and exercised by the offline test suite. The comparison table across all configs and the winning-config writeup are produced by running the sweep against a live API and a verified eval set:
+
+```bash
+uv run code-rag-eval experiment   # writes results/<config>.json + regenerates DECISIONS.md
+```
+
+`DECISIONS.md` is the data-backed writeup — the comparison table and the named winning config are filled in by that run. The Streamlit demo app (`app/streamlit_app.py`) drives the end-to-end flow — question in, answer out, sources shown as `file:line` — and a screen-recorded walkthrough will accompany the first live run.
 
 ---
 
@@ -341,21 +324,12 @@ There is one focused test module per source module, written test-first (TDD).
 
 - **Design spec:** [`docs/superpowers/specs/2026-06-19-code-rag-eval-design.md`](docs/superpowers/specs/2026-06-19-code-rag-eval-design.md)
 - **Implementation plan (Phases 0–3):** [`docs/superpowers/plans/2026-06-19-code-rag-eval-phase0-3.md`](docs/superpowers/plans/2026-06-19-code-rag-eval-phase0-3.md)
-- **[`DECISIONS.md`](DECISIONS.md)** — the data-backed writeup of the winning config + trade-offs, with a comparison table across all 8 configs. The template is generated by `uv run code-rag-eval experiment`; the final numbers require a live run with API keys and a verified `data/eval/questions.jsonl`.
-
----
-
-## Roadmap
-
-| Phase | Work | Status |
-|---|---|---|
-| **4** | AST-aware chunking (tree-sitter), `voyage-code-3` embeddings, hybrid retrieval (BM25 + vector via Reciprocal Rank Fusion) | ✅ Code-complete |
-| **5** | 8-config experiment sweep CLI (`experiment` command); tabulates to `results/` | ✅ Code-complete (live run needs API keys + verified eval set) |
-| **6** | `DECISIONS.md`: winning config + trade-offs, COIR-framed methodology; generated by `experiment` sweep | ✅ Template generated; final numbers require a live run |
-| **7** | Streamlit demo (`app/streamlit_app.py`); architecture diagram; 2-min walkthrough video | ✅ Demo implemented; walkthrough video pending |
+- **[`DECISIONS.md`](DECISIONS.md)** — the data-backed writeup of the winning config + trade-offs; generated by `uv run code-rag-eval experiment` and filled in by a live run.
 
 ---
 
 ## Tech stack
 
 Python 3.12 · [uv](https://docs.astral.sh/uv/) · [Typer](https://typer.tiangolo.com/) (CLI) · [Pydantic](https://docs.pydantic.dev/) · [ChromaDB](https://www.trychroma.com/) · OpenAI (`text-embedding-3-large`) · Anthropic (`claude-sonnet-4-6`) · pytest. Corpus: [FastAPI](https://github.com/fastapi/fastapi) 0.115.0.
+</content>
+</invoke>

@@ -40,17 +40,19 @@ class LLMClient(Protocol):
 class AnthropicClient:
     """Thin wrapper over the Anthropic Messages API. Exercised manually / via CLI."""
 
-    def __init__(self, model: str = "claude-sonnet-4-6"):
-        from anthropic import Anthropic
-        self._client = Anthropic()
+    def __init__(self, model: str = "claude-sonnet-4-6", base_url: str | None = None):
+        from code_rag_eval.anthropic_backend import build_anthropic
+        self._client = build_anthropic(base_url)
         self.model = model
 
     def complete(self, system: str, user: str) -> str:
+        from code_rag_eval.anthropic_backend import THINKING_DISABLED
         msg = self._client.messages.create(
             model=self.model,
             max_tokens=1024,
             system=system,
             messages=[{"role": "user", "content": user}],
+            thinking=THINKING_DISABLED,
         )
         return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
 
