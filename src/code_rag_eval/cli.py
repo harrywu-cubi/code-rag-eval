@@ -71,6 +71,21 @@ def eval(config: str = "configs/baseline.yaml",
     """Run the evaluation harness for a config over the verified question set."""
     load_dotenv()
     cfg = load_config(config)
+
+    # Validate the question set before constructing any API clients, so missing/empty
+    # eval sets fail fast with a clear message instead of a key error or a crash.
+    qpath = Path(questions)
+    if not qpath.exists():
+        typer.echo(
+            f"eval set not found: {questions}. Build it with `draft-questions`, "
+            f"hand-verify, then save it to {questions} (see README)."
+        )
+        raise typer.Exit(code=1)
+    records = load_eval_set(qpath)
+    if not records:
+        typer.echo(f"no questions in {questions}; nothing to evaluate.")
+        raise typer.Exit(code=1)
+
     embed = CachedEmbeddingClient(make_embedding_client(cfg.embedding),
                                   EmbeddingCache(".emb_cache.sqlite"))
     llm = make_llm_client(cfg.generation)
@@ -79,8 +94,7 @@ def eval(config: str = "configs/baseline.yaml",
     judge = AnthropicJudge(model=cfg.generation.model)
     answer_fn = partial(generate_answer, llm=llm)
 
-    records = load_eval_set(questions)
-    rows = evaluate(records, retriever, lambda q, r: answer_fn(q, r), judge)
+    rows = evaluate(records, retriever, answer_fn, judge)
     agg = aggregate(rows)
     out = write_report(cfg.name, rows, agg, Path(results_dir))
     typer.echo(f"evaluated {len(records)} questions -> {out}")

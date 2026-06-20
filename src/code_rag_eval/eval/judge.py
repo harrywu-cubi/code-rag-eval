@@ -10,7 +10,9 @@ class LLMJudge(Protocol):
 
 
 def _first_float(text: str, default: float = 0.0) -> float:
-    m = re.search(r"[0-1](?:\.\d+)?", text)
+    # Match a standalone 0..1 score token only: "0", "1", "0.85", "1.0".
+    # Word boundaries prevent mis-reading the "1" inside "10" or "7/10" as 1.0.
+    m = re.search(r"\b(?:0(?:\.\d+)?|1(?:\.0+)?)\b", text)
     return min(1.0, max(0.0, float(m.group(0)))) if m else default
 
 
