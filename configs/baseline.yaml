@@ -1,0 +1,14 @@
+name: baseline
+chunking:
+  strategy: fixed
+  window_lines: 40
+  overlap_lines: 10
+embedding:
+  provider: openai
+  model: text-embedding-3-large
+retrieval:
+  method: vector
+  top_k: 5
+generation:
+  provider: anthropic
+  model: claude-sonnet-4-6
