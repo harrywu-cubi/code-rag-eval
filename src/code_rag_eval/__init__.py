@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from code-rag-eval!")
+"""code-rag-eval: code Q&A RAG with a rigorous evaluation harness."""
