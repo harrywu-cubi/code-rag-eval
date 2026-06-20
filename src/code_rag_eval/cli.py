@@ -8,6 +8,7 @@ from code_rag_eval.ingest.store import ChromaStore
 from code_rag_eval.ingest.pipeline import ingest as run_ingest
 from code_rag_eval.retrieve.vector import VectorRetriever
 from code_rag_eval.generate.answer import generate_answer
+from code_rag_eval.eval.generate_questions import collect_symbols, draft_candidates
 
 app = typer.Typer(help="code-rag-eval: code Q&A RAG with an evaluation harness")
 
@@ -42,6 +43,20 @@ def ask(question: str, config: str = "configs/baseline.yaml") -> None:
     typer.echo("\n--- sources ---")
     for r in retrieved:
         typer.echo(f"  {r.chunk.file}:{r.chunk.start_line}-{r.chunk.end_line} (score {r.score:.3f})")
+
+
+@app.command("draft-questions")
+def draft_questions(config: str = "configs/baseline.yaml",
+                    per_category: int = 15,
+                    out: str = "data/eval/candidates.jsonl") -> None:
+    """Draft candidate eval questions for HUMAN verification (writes candidates.jsonl)."""
+    load_dotenv()
+    cfg = load_config(config)
+    llm = make_llm_client(cfg.generation)
+    symbols = collect_symbols(SOURCE_DIR, CORPUS_ROOT)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    recs = draft_candidates(symbols, ["locate", "explain", "trace", "behavior"], llm, per_category, Path(out))
+    typer.echo(f"drafted {len(recs)} candidates -> {out} (REVIEW + verify before use)")
 
 
 @app.command()
