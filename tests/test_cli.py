@@ -24,3 +24,10 @@ def test_eval_exits_when_questions_empty(tmp_path):
     result = runner.invoke(app, ["eval", "--questions", str(p)])
     assert result.exit_code != 0
     assert "nothing to evaluate" in result.output.lower()
+
+
+def test_experiment_dry_run_lists_matrix():
+    result = runner.invoke(app, ["experiment", "--dry-run"])
+    assert result.exit_code == 0
+    assert "fixed_openai_vector" in result.output
+    assert "ast_voyage_hybrid" in result.output

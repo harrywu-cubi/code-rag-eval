@@ -14,6 +14,8 @@ from code_rag_eval.eval.generate_questions import collect_symbols, draft_candida
 from code_rag_eval.eval.dataset import load_eval_set
 from code_rag_eval.eval.judge import AnthropicJudge
 from code_rag_eval.eval.harness import evaluate, aggregate, write_report
+from code_rag_eval.eval.experiment import matrix_configs
+from code_rag_eval.eval.report import load_results, comparison_table, write_decisions
 
 app = typer.Typer(help="code-rag-eval: code Q&A RAG with an evaluation harness")
 
@@ -103,9 +105,46 @@ def eval(config: str = "configs/baseline.yaml",
 
 
 @app.command()
-def experiment() -> None:
-    """Sweep the full config matrix. (Phase 5 plan)"""
-    typer.echo("experiment stub")
+def experiment(config: str = "configs/baseline.yaml",
+               questions: str = "data/eval/questions.jsonl",
+               results_dir: str = "results",
+               dry_run: bool = False) -> None:
+    """Run the full chunking x embedding x retrieval matrix and write a comparison + DECISIONS.md."""
+    cfg = load_config(config)
+    configs = matrix_configs(cfg)
+    if dry_run:
+        for c in configs:
+            typer.echo(c.name)
+        return
+    load_dotenv()
+    qpath = Path(questions)
+    if not qpath.exists():
+        typer.echo(f"eval set not found: {questions}. See README.")
+        raise typer.Exit(code=1)
+    records = load_eval_set(qpath)
+    if not records:
+        typer.echo(f"no questions in {questions}; nothing to evaluate.")
+        raise typer.Exit(code=1)
+
+    cache = EmbeddingCache(".emb_cache.sqlite")
+    judge = AnthropicJudge(model=cfg.generation.model)
+    out_dir = Path(results_dir)
+    for c in configs:
+        typer.echo(f"=== {c.name} ===")
+        embed = CachedEmbeddingClient(make_embedding_client(c.embedding), cache)
+        store = ChromaStore(collection_name=c.name, persist_dir=CHROMA_DIR)
+        run_ingest(SOURCE_DIR, CORPUS_ROOT, c.chunking, embed, store)
+        retriever = make_retriever(c, store, embed)
+        llm = make_llm_client(c.generation)
+        answer_fn = partial(generate_answer, llm=llm)
+        rows = evaluate(records, retriever, answer_fn, judge)
+        agg = aggregate(rows)
+        write_report(c.name, rows, agg, out_dir)
+        typer.echo(f"  hit@5={agg['hit_at_5']:.3f} mrr={agg['mrr']:.3f} faithfulness={agg['faithfulness']:.3f}")
+    results = load_results(out_dir)
+    typer.echo(comparison_table(results))
+    write_decisions(results, Path("DECISIONS.md"))
+    typer.echo("wrote DECISIONS.md")
 
 
 if __name__ == "__main__":
