@@ -21,3 +21,15 @@ class OpenAIEmbeddingClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         resp = self._client.embeddings.create(model=self.model, input=texts)
         return [d.embedding for d in resp.data]
+
+
+class VoyageEmbeddingClient:
+    """Thin wrapper over the Voyage AI embeddings API. Exercised manually / via CLI."""
+
+    def __init__(self, model: str = "voyage-code-3"):
+        import voyageai
+        self._client = voyageai.Client()
+        self.model = model
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._client.embed(texts, model=self.model).embeddings
