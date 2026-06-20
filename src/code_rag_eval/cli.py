@@ -1,14 +1,19 @@
 from __future__ import annotations
+from functools import partial
 from pathlib import Path
 import typer
 from dotenv import load_dotenv
 from code_rag_eval.config import load_config
 from code_rag_eval.factories import make_embedding_client, make_llm_client
 from code_rag_eval.ingest.store import ChromaStore
+from code_rag_eval.ingest.cache import EmbeddingCache, CachedEmbeddingClient
 from code_rag_eval.ingest.pipeline import ingest as run_ingest
 from code_rag_eval.retrieve.vector import VectorRetriever
 from code_rag_eval.generate.answer import generate_answer
 from code_rag_eval.eval.generate_questions import collect_symbols, draft_candidates
+from code_rag_eval.eval.dataset import load_eval_set
+from code_rag_eval.eval.judge import AnthropicJudge
+from code_rag_eval.eval.harness import evaluate, aggregate, write_report
 
 app = typer.Typer(help="code-rag-eval: code Q&A RAG with an evaluation harness")
 
@@ -60,9 +65,27 @@ def draft_questions(config: str = "configs/baseline.yaml",
 
 
 @app.command()
-def eval(config: str = "configs/baseline.yaml") -> None:
-    """Run the evaluation harness for a config. (wired in Task 21)"""
-    typer.echo(f"eval stub: {config}")
+def eval(config: str = "configs/baseline.yaml",
+         questions: str = "data/eval/questions.jsonl",
+         results_dir: str = "results") -> None:
+    """Run the evaluation harness for a config over the verified question set."""
+    load_dotenv()
+    cfg = load_config(config)
+    embed = CachedEmbeddingClient(make_embedding_client(cfg.embedding),
+                                  EmbeddingCache(".emb_cache.sqlite"))
+    llm = make_llm_client(cfg.generation)
+    store = ChromaStore(collection_name=cfg.name, persist_dir=CHROMA_DIR)
+    retriever = VectorRetriever(store, embed)
+    judge = AnthropicJudge(model=cfg.generation.model)
+    answer_fn = partial(generate_answer, llm=llm)
+
+    records = load_eval_set(questions)
+    rows = evaluate(records, retriever, lambda q, r: answer_fn(q, r), judge)
+    agg = aggregate(rows)
+    out = write_report(cfg.name, rows, agg, Path(results_dir))
+    typer.echo(f"evaluated {len(records)} questions -> {out}")
+    for key in ("hit_at_1", "hit_at_5", "mrr", "faithfulness", "citation_accuracy"):
+        typer.echo(f"  {key}: {agg[key]:.3f}")
 
 
 @app.command()
