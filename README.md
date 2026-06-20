@@ -12,7 +12,7 @@ Ask a question like *"Where is the route handler built?"* and the system retriev
 
 ## Status
 
-**Phases 0–3 are complete**: a working baseline RAG pipeline plus the full evaluation harness, with 31 offline tests passing. Phases 4–7 (the experiment sweep and polish) are planned — see the [Roadmap](#roadmap).
+**Phases 0–7 are code-complete**: a working baseline RAG pipeline, full evaluation harness (55 offline tests passing), AST-aware chunking, Voyage embeddings, hybrid retrieval, the experiment sweep CLI, and the Streamlit demo. The live sweep (which produces the final `DECISIONS.md` numbers) requires API keys and a verified `data/eval/questions.jsonl` — see the [Roadmap](#roadmap).
 
 | Capability | Status |
 |---|---|
@@ -26,13 +26,13 @@ Ask a question like *"Where is the route handler built?"* and the system retriev
 | Retrieval metrics: hit-rate@k, recall@k, MRR | ✅ Implemented |
 | Generation metrics: faithfulness, answer relevancy, context precision (LLM-judge) + citation accuracy | ✅ Implemented |
 | On-disk embedding cache | ✅ Implemented |
-| AST-aware (tree-sitter) chunking | 🔜 Phase 4 |
-| Code-specialized `voyage-code-3` embeddings | 🔜 Phase 4 |
-| Hybrid retrieval (BM25 + vector, RRF) | 🔜 Phase 4 |
-| 8-config experiment sweep + `DECISIONS.md` | 🔜 Phase 5–6 |
-| Streamlit demo UI | 🔜 Phase 7 |
+| AST-aware (tree-sitter) chunking | ✅ Implemented |
+| Code-specialized `voyage-code-3` embeddings | ✅ Implemented |
+| Hybrid retrieval (BM25 + vector, RRF) | ✅ Implemented |
+| 8-config experiment sweep + `DECISIONS.md` | ✅ Tooling built (live run needs API keys) |
+| Streamlit demo UI | ✅ Implemented |
 
-Config values `ast` / `voyage` / `hybrid` are recognized but raise a clear "not until Phase 4" error, so adding them is additive — not a rewrite.
+Config values `ast` / `voyage` / `hybrid` are fully supported. Use them in any YAML config or pass them via the `experiment` sweep command.
 
 ---
 
@@ -40,23 +40,23 @@ Config values `ast` / `voyage` / `hybrid` are recognized but raise a clear "not 
 
 ```
 INGESTION (offline)
-  FastAPI source ─► chunker {fixed | ast*} ─► embedding client {openai | voyage*}
+  FastAPI source ─► chunker {fixed | ast} ─► embedding client {openai | voyage}
                  ─► embedding cache ─► Chroma vector store (one collection per config)
 
 QUERY (online)
-  question ─► VectorRetriever (embed → top-k ANN)        (* bm25 / hybrid: Phase 4)
+  question ─► retriever {vector | bm25 | hybrid-RRF} (embed → top-k ANN or BM25 or both)
            ─► prompt assembly (file:line headers) ─► Claude ─► answer + file:line citations
 
 EVALUATION (the deliverable)
   eval set {question, category, gold symbols/files/line-ranges, reference answer}
        ├─ RETRIEVAL: hit-rate@k, recall@k, MRR
        └─ GENERATION: faithfulness, answer relevancy, context precision (LLM-judge) + citation accuracy
-              └─ run a config ─► results/<config>.json
+              └─ run a config ─► results/<config>.json ─► DECISIONS.md (experiment sweep)
 ```
 
 The framework (Chroma) is glue. The **chunker, retriever, prompt assembly, LLM-judge, and the entire eval harness are hand-written** — this is the answer to "what did you build without the framework?"
 
-Every seam is a small interface (`EmbeddingClient`, `VectorStore`, `LLMClient`, `LLMJudge`), so tests run fully offline against fakes and Phase 4 can swap in new implementations without touching callers.
+Every seam is a small interface (`EmbeddingClient`, `VectorStore`, `LLMClient`, `LLMJudge`), so tests run fully offline against fakes and new implementations slot in without touching callers.
 
 ---
 
@@ -64,6 +64,8 @@ Every seam is a small interface (`EmbeddingClient`, `VectorStore`, `LLMClient`, 
 
 ```
 code-rag-eval/
+├── app/
+│   └── streamlit_app.py          # Streamlit demo: query box → answer + shown sources
 ├── configs/
 │   └── baseline.yaml             # the experiment config (chunking × embedding × retrieval × generation)
 ├── data/
@@ -78,13 +80,17 @@ code-rag-eval/
 │   ├── factories.py              # build embedding/LLM clients from config
 │   ├── ingest/
 │   │   ├── walk.py               # find .py files
-│   │   ├── chunkers.py           # fixed-size line-window chunker (AST in Phase 4)
-│   │   ├── embed.py              # EmbeddingClient protocol + OpenAI impl
+│   │   ├── chunkers.py           # fixed-size line-window chunker + AST (tree-sitter) chunker
+│   │   ├── embed.py              # EmbeddingClient protocol + OpenAI + Voyage impls
 │   │   ├── cache.py              # sqlite embedding cache + cached wrapper
 │   │   ├── store.py              # Chroma vector store + Chunk↔metadata mapping
 │   │   └── pipeline.py           # ingest orchestration
 │   ├── retrieve/
-│   │   └── vector.py             # VectorRetriever
+│   │   ├── tokenize.py           # code-aware tokenizer
+│   │   ├── vector.py             # VectorRetriever
+│   │   ├── bm25.py               # BM25Retriever
+│   │   ├── hybrid.py             # HybridRetriever (RRF fusion)
+│   │   └── factory.py            # build retriever from config
 │   ├── generate/
 │   │   ├── prompt.py             # hand-written prompt assembly
 │   │   └── answer.py             # LLM call + file:line citation extraction
@@ -96,7 +102,9 @@ code-rag-eval/
 │   │   ├── retrieval_metrics.py  # hit-rate@k, recall@k, MRR
 │   │   ├── judge.py              # LLMJudge protocol + Anthropic judge
 │   │   ├── generation_metrics.py # faithfulness, relevancy, precision, citation accuracy
-│   │   └── harness.py            # evaluate → aggregate → write report
+│   │   ├── harness.py            # evaluate → aggregate → write report
+│   │   ├── experiment.py         # 8-config experiment matrix + sweep runner
+│   │   └── report.py             # DECISIONS.md generator
 │   └── cli.py                    # ingest | ask | draft-questions | eval | experiment
 ├── tests/                        # one test module per source module; all offline (fakes)
 └── docs/superpowers/
@@ -191,6 +199,23 @@ uv run code-rag-eval eval
 
 > Requires `data/eval/questions.jsonl` to exist — see [Building the eval set](#building-the-eval-set). The embedding cache (`.emb_cache.sqlite`) means re-runs only pay for new texts.
 
+### Run the experiment sweep
+
+```bash
+uv run code-rag-eval experiment --dry-run   # list the 8 configs (offline, no keys)
+uv run code-rag-eval experiment             # full sweep: ingest+eval each config; writes results/ + DECISIONS.md
+```
+
+The 8-config matrix is **chunking{fixed, AST} × embedding{OpenAI-general, Voyage-code} × retrieval{vector, hybrid}**. The live sweep needs API keys and a verified `data/eval/questions.jsonl`; `--dry-run` works offline.
+
+### Demo UI
+
+```bash
+uv run streamlit run app/streamlit_app.py
+```
+
+A thin query box → answer + shown sources (`file:line`). Requires an ingested corpus and API keys.
+
 ### Options
 
 | Command | Key options |
@@ -199,7 +224,7 @@ uv run code-rag-eval eval
 | `ask QUESTION` | `--config configs/baseline.yaml` |
 | `draft-questions` | `--config`, `--per-category 15`, `--out data/eval/candidates.jsonl` |
 | `eval` | `--config`, `--questions data/eval/questions.jsonl`, `--results-dir results` |
-| `experiment` | *(Phase 5 — the full config sweep)* |
+| `experiment` | `--config`, `--questions`, `--results-dir`, `--dry-run` |
 
 ---
 
@@ -210,21 +235,21 @@ A run is fully described by one YAML file. `configs/baseline.yaml`:
 ```yaml
 name: baseline
 chunking:
-  strategy: fixed        # fixed | ast (ast = Phase 4)
+  strategy: fixed        # fixed | ast
   window_lines: 40
   overlap_lines: 10
 embedding:
-  provider: openai       # openai | voyage (voyage = Phase 4)
+  provider: openai       # openai | voyage
   model: text-embedding-3-large
 retrieval:
-  method: vector         # vector | bm25 | hybrid (bm25/hybrid = Phase 4)
+  method: vector         # vector | bm25 | hybrid
   top_k: 5
 generation:
   provider: anthropic
   model: claude-sonnet-4-6
 ```
 
-The planned experiment matrix (Phase 5) sweeps **chunking {fixed, AST} × embedding {OpenAI-general, Voyage-code} × retrieval {vector, hybrid}** = 8 configs, with a BM25-only reference baseline, to answer: *does a code-trained embedding and/or AST-aware chunking and/or lexical hybrid retrieval find the right FastAPI function more reliably?*
+The experiment matrix sweeps **chunking {fixed, AST} × embedding {OpenAI-general, Voyage-code} × retrieval {vector, hybrid}** = 8 configs, with a BM25-only reference baseline, to answer: *does a code-trained embedding and/or AST-aware chunking and/or lexical hybrid retrieval find the right FastAPI function more reliably?* Run `uv run code-rag-eval experiment` to execute the sweep; results land in `results/` and a comparison table + winning config are written to `DECISIONS.md`. (Regenerate after a live run to get real numbers.)
 
 ---
 
@@ -305,7 +330,7 @@ The full suite is **offline** — no API keys, no network. Embedding/LLM/judge c
 
 ```bash
 uv run pytest -q
-# 31 passed
+# 55 passed
 ```
 
 There is one focused test module per source module, written test-first (TDD).
@@ -316,18 +341,18 @@ There is one focused test module per source module, written test-first (TDD).
 
 - **Design spec:** [`docs/superpowers/specs/2026-06-19-code-rag-eval-design.md`](docs/superpowers/specs/2026-06-19-code-rag-eval-design.md)
 - **Implementation plan (Phases 0–3):** [`docs/superpowers/plans/2026-06-19-code-rag-eval-phase0-3.md`](docs/superpowers/plans/2026-06-19-code-rag-eval-phase0-3.md)
-- **`DECISIONS.md`** (the data-backed writeup of the winning config + trade-offs) lands after the Phase 5 experiment sweep.
+- **[`DECISIONS.md`](DECISIONS.md)** — the data-backed writeup of the winning config + trade-offs, with a comparison table across all 8 configs. The template is generated by `uv run code-rag-eval experiment`; the final numbers require a live run with API keys and a verified `data/eval/questions.jsonl`.
 
 ---
 
 ## Roadmap
 
-| Phase | Work |
-|---|---|
-| **4** | AST-aware chunking (tree-sitter), `voyage-code-3` embeddings, hybrid retrieval (BM25 + vector via Reciprocal Rank Fusion) |
-| **5** | Run the full 8-config experiment sweep; tabulate to `results/` |
-| **6** | `DECISIONS.md`: winning config + trade-offs, COIR-framed methodology |
-| **7** | Streamlit demo (query box + answer + shown source), architecture diagram, walkthrough |
+| Phase | Work | Status |
+|---|---|---|
+| **4** | AST-aware chunking (tree-sitter), `voyage-code-3` embeddings, hybrid retrieval (BM25 + vector via Reciprocal Rank Fusion) | ✅ Code-complete |
+| **5** | 8-config experiment sweep CLI (`experiment` command); tabulates to `results/` | ✅ Code-complete (live run needs API keys + verified eval set) |
+| **6** | `DECISIONS.md`: winning config + trade-offs, COIR-framed methodology; generated by `experiment` sweep | ✅ Template generated; final numbers require a live run |
+| **7** | Streamlit demo (`app/streamlit_app.py`); architecture diagram; 2-min walkthrough video | ✅ Demo implemented; walkthrough video pending |
 
 ---
 
